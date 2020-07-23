@@ -1,0 +1,8 @@
+logs/
+tmp/
+exceptions/
+dragonruby
+console_history.txt
+user_controller_mappings.txt
+dragonsweeper.sublime-project
+dragonsweeper.sublime-workspace
