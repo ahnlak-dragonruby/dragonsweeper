@@ -56,7 +56,7 @@ class Board < Serializable
 
 		# Clear and resize the board array
 		@dragons = Array.new( @width * @height, 0 )
-		@covered = Array.new( @width * @height, true )
+		@cell_status = Array.new( @width * @height, :status_covered )
 
 		# And now set up the render targets we'll need
 		$gtk.args.render_target( :cellcover ).sprites << {
@@ -127,11 +127,6 @@ class Board < Serializable
 					end
 				end
 
-				puts "Added #{@dragons.count{ |cell| cell >= DRAGON }} dragons..."
-				(0...@height).each do |line|
-					puts @dragons.slice( line*@width, @width ).to_s
-				end
-
 			end
 
 		end
@@ -139,24 +134,26 @@ class Board < Serializable
 		# Now, I've been lazy with setting dragon counts, we we need to normalise
 		# any overinflated dragons :-)
 		@dragons.map! { |cell| cell > DRAGON ? DRAGON : cell }
-		puts @dragons
 
 	end
 
 
 	# Uncover the specified cell; done in a function to make recursion easier
-	def uncover therow, thecol
+	def uncover therow, thecol, uncovered = false
 
 		# Sanity check that we're on the board and not already exposed
-		if !therow.between?( 0, @height-1 ) || !thecol.between?( 0, @width-1 ) || !@covered[(therow*@width)+thecol]
+		if !therow.between?( 0, @height-1 ) || !thecol.between?( 0, @width-1 ) || 
+		   ( !uncovered && @cell_status[(therow*@width)+thecol] != :status_covered )
 			return
 		end
-
+		puts "Status at #{therow}, #{thecol} is #{@cell_status[(therow*@width)+thecol].to_s}"
 		# First off, simply reveal the cell
-		@covered[(therow*@width)+thecol] = false
+		if !uncovered
+			@cell_status[(therow*@width)+thecol] = :status_revealed
+		end
 
 		# If this was a completely empty cell, recurse through our neighbours
-		if @dragons[(therow*@width)+thecol] == 0
+		if uncovered || @dragons[(therow*@width)+thecol] == 0
 			uncover therow-1, thecol-1
 			uncover therow-1, thecol
 			uncover therow-1, thecol+1
@@ -170,27 +167,50 @@ class Board < Serializable
 	end
 
 
-
 	# Update; handles user input and updates the state of the game
 	def update args
 
-		# If the user clicks on the board, work out where.
-		if args.inputs.mouse.button_left
+		# Normalise the mouse position to the board origin
+		mouse_x = ( ( args.inputs.mouse.x - @board_x ) / @cell_size ).floor
+		mouse_y = ( ( args.inputs.mouse.y - @board_y ) / @cell_size ).floor
 
-			# Normalise the mouse position to the board origin
-			mouse_x = ( ( args.inputs.mouse.x - @board_x ) / @cell_size ).floor
-			mouse_y = ( ( args.inputs.mouse.y - @board_y ) / @cell_size ).floor
+		# Handle if there's been a click
+		if args.inputs.mouse.click
 
-			# Obviously can only act if they're over the board
-			if mouse_x.between?( 0, @width-1 ) && mouse_y.between?( 0, @height-1 )
+			# The user can do one of three things; click left, click right,
+			# or click both. Somwhow we have to handle all of this!
+			if args.inputs.mouse.button_left && args.inputs.mouse.button_right
 
-				# If this is the first cell, spawn dragons!
-				if !@covered.include?(false)
-					spawn_dragons mouse_y, mouse_x
+				# Clear around an already-cleared cell
+				uncover mouse_y, mouse_x, true
+
+			# If the user wants to add a gold pile to a covered cell, that's easy
+			elsif args.inputs.mouse.button_right
+
+				# Needs to be on the board, and over a covered cell
+				cell_idx = (mouse_y*@width) + mouse_x
+				if mouse_x.between?( 0, @width-1 ) && mouse_y.between?( 0, @height-1 ) && @cell_status[cell_idx] != :status_revealed
+
+					# We maintain a list of gold pile co-ordinates, and just toggle
+					@cell_status[cell_idx] = ( @cell_status[cell_idx] == :status_gold ) ? :status_covered : :status_gold
+
 				end
 
-				# And then simply uncover the cell here
-				uncover mouse_y, mouse_x
+			# If the user clicks on the board, work out where.
+			elsif args.inputs.mouse.button_left
+
+				# Obviously can only act if they're over the board
+				if mouse_x.between?( 0, @width-1 ) && mouse_y.between?( 0, @height-1 )
+
+					# If this is the first cell, spawn dragons!
+					if !@cell_status.include?(:status_revealed)
+						spawn_dragons mouse_y, mouse_x
+					end
+
+					# And then simply uncover the cell here
+					uncover mouse_y, mouse_x
+
+				end
 
 			end
 
@@ -228,8 +248,10 @@ class Board < Serializable
 				cell_idx = (row*@width)+col
 
 				# Check to see if this cell is covered
-				if @covered[cell_idx]
+				if @cell_status[cell_idx] == :status_covered
 					cell = :cellcover
+				elsif @cell_status[cell_idx] == :status_gold
+					cell = :gold
 				else
 					if @dragons[cell_idx] == DRAGON
 						cell = :dragon
