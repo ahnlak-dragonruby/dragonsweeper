@@ -268,7 +268,8 @@ class Board < Serializable
 		end
 
 		# Now check for end conditions; have we flagged all the dragons we seek?
-		if ( @spawned ) && ( !@victorious) && ( @cell_status.count( :status_gold ) == @dragon_count )
+		if ( @spawned ) && ( !@victorious) && ( @burniation == -1 ) &&
+		   ( @cell_status.count( :status_gold ) == @dragon_count )
 
 			# Then automagically reveal all non-flagged cells
 			@end_tick = args.tick_count
@@ -287,6 +288,7 @@ class Board < Serializable
 			@dragons.each_with_index { |dragon, index|
 				if ( dragon == DRAGON ) && ( @cell_status[index] == :status_revealed )
 					@burniation = index
+					@victorious = false
 					@end_tick = args.tick_count
 				end
 			}
