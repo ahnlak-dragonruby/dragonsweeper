@@ -20,6 +20,7 @@ class Board < Serializable
 		# Set up some default values here; things like the size of board,
 		# level of complexity and suchlike.
 		size :small, 1
+		render_board
 
 	end
 
@@ -58,27 +59,42 @@ class Board < Serializable
 		@dragons = Array.new( @width * @height, 0 )
 		@cell_status = Array.new( @width * @height, :status_covered )
 
-		# And now set up the render targets we'll need
-		$gtk.args.render_target( :cellcover ).sprites << {
-			x: 0, y: 0, w: @cell_size, h: @cell_size, path: @cover_png,
-		}
-		$gtk.args.render_target( :dragon ).sprites << {
-			x: 0, y: 0, w: @cell_size, h: @cell_size, path: @dragon_png,
-		}
-		$gtk.args.render_target( :gold ).sprites << {
-			x: 0, y: 0, w: @cell_size, h: @cell_size, path: @gold_png,
-		}
-		(0..8).each do |index|
-			$gtk.args.render_target( "cell#{index}".to_sym ).sprites << {
-				x: 0, y: 0, w: @cell_size, h: @cell_size, path: @cell_png[index],
-			}
-		end
+		# Decide how big the stuff on the right hand side should be
+		@label_size = -2.5
+		@size_restart = $gtk.calcstringbox( "Restart", @label_size )
+		@size_dragon = $gtk.calcstringbox( "888 Dragons To Find", @label_size )
+		@size_time = $gtk.calcstringbox( "88:88:88", @label_size )
 
-		# Lastly, work out some sensible board offsets
+		while [ @size_restart.x, @size_dragon.x, @size_time.x ].max < ( $gtk.args.grid.w - ( ( @width + 6 ) * @cell_size ) )
+
+			# Try some slightly bigger sizes then
+			@size_restart = $gtk.calcstringbox( "Restart", @label_size+0.1 )
+			@size_dragon = $gtk.calcstringbox( "888 Dragons To Find", @label_size+0.1 )
+			@size_time = $gtk.calcstringbox( "88:88:88", @label_size+0.1 )
+
+			# And nudge up the label size
+			@label_size += 0.1
+		end 
+
+		@label_size -= 0.1
+		@size_restart = $gtk.calcstringbox( "Restart", @label_size )
+		@size_dragon = $gtk.calcstringbox( "888 Dragons To Find", @label_size )
+		@size_time = $gtk.calcstringbox( "88:88:88", @label_size )
+		
+		puts @label_size
+
+		# Lastly, work out some sensible offsets
 		@board_w = @width * @cell_size
 		@board_h = @height * @cell_size
-		@board_x = $gtk.args.grid.center_x - ( @board_w / 2 )
+		@board_x = 2 * @cell_size 
 		@board_y = $gtk.args.grid.center_y - ( @board_h / 2 )
+
+		@label_x = @board_x + @board_w + ( 2 * @cell_size )
+		@label_time_y = $gtk.args.grid.center_y + ( @size_time.y + 20 ) * 1.5
+		@label_dragon_y = @label_time_y - 20 - @size_dragon.y - 20
+		@label_restart_y = @label_dragon_y - 20 - @size_restart.y - 20
+
+		@label_width = [ @size_restart.x, @size_dragon.x, @size_time.x ].max + 20
 
 	end
 
@@ -135,6 +151,9 @@ class Board < Serializable
 		# any overinflated dragons :-)
 		@dragons.map! { |cell| cell > DRAGON ? DRAGON : cell }
 
+		# Lastly, remember when we started playing properly
+		@start_tick = $gtk.args.tick_count
+
 	end
 
 
@@ -146,7 +165,7 @@ class Board < Serializable
 		   ( !uncovered && @cell_status[(therow*@width)+thecol] != :status_covered )
 			return
 		end
-		puts "Status at #{therow}, #{thecol} is #{@cell_status[(therow*@width)+thecol].to_s}"
+		
 		# First off, simply reveal the cell
 		if !uncovered
 			@cell_status[(therow*@width)+thecol] = :status_revealed
@@ -177,18 +196,22 @@ class Board < Serializable
 		# Handle if there's been a click
 		if args.inputs.mouse.click
 
+			# Save me some typing later on... ;-)
+			cell_idx = (mouse_y*@width) + mouse_x
+
 			# The user can do one of three things; click left, click right,
 			# or click both. Somwhow we have to handle all of this!
 			if args.inputs.mouse.button_left && args.inputs.mouse.button_right
 
 				# Clear around an already-cleared cell
-				uncover mouse_y, mouse_x, true
+				if @cell_status[cell_idx] == :status_revealed
+					uncover mouse_y, mouse_x, true
+				end
 
 			# If the user wants to add a gold pile to a covered cell, that's easy
 			elsif args.inputs.mouse.button_right
 
 				# Needs to be on the board, and over a covered cell
-				cell_idx = (mouse_y*@width) + mouse_x
 				if mouse_x.between?( 0, @width-1 ) && mouse_y.between?( 0, @height-1 ) && @cell_status[cell_idx] != :status_revealed
 
 					# We maintain a list of gold pile co-ordinates, and just toggle
@@ -211,6 +234,56 @@ class Board < Serializable
 					uncover mouse_y, mouse_x
 
 				end
+
+			end
+
+			# Redraw the board
+			render_board
+
+		end
+
+		# Now check for end conditions; have we flagged all the dragons we seek?
+		if @cell_status.count :status_gold == dragon_count
+		end
+
+		# Have we revealed a dragon?!
+		
+
+	end
+
+
+	# Render the board; because this is quite expensive, we'll only do it when
+	# things have changed, into a single render_target that can be pushed out
+	# every frame
+	def render_board
+
+		# So, we'll rebuild the render target from scratch
+		(0...@height).each do |row|
+			(0...@width).each do |col|
+
+				# Save myself some typing, and some math cycles...
+				cell_idx = (row*@width)+col
+
+				# Check to see if this cell is covered
+				if @cell_status[cell_idx] == :status_covered
+					cell = @cover_png
+				elsif @cell_status[cell_idx] == :status_gold
+					cell = @gold_png
+				else
+					if @dragons[cell_idx] == DRAGON
+						cell = @dragon_png
+					else
+						cell = @cell_png[@dragons[cell_idx]]
+					end
+				end
+
+				# We know what to draw, so draw it
+				$gtk.args.render_target( :board ).width = @board_w
+				$gtk.args.render_target( :board ).height = @board_h
+				$gtk.args.render_target( :board ).sprites << {
+					x: (col*@cell_size), y: (row*@cell_size),
+					w: @cell_size, h: @cell_size, path: cell,
+				}
 
 			end
 
@@ -240,36 +313,61 @@ class Board < Serializable
 			}
 		end
 
-		# And then work through the board, rendering appropriately
-		(0...@height).each do |row|
-			(0...@width).each do |col|
+		# Do similar work for the labels
+		args.outputs.solids << {
+			x: @label_x, y: @label_time_y, w: @label_width, h: @size_time.y,
+			r: 222, g: 222, b: 222,
+		}
+		args.outputs.solids << {
+			x: @label_x, y: @label_dragon_y, w: @label_width, h: @size_dragon.y,
+			r: 222, g: 222, b: 222,
+		}
+		args.outputs.solids << {
+			x: @label_x, y: @label_restart_y, w: @label_width, h: @size_restart.y,
+			r: 222, g: 222, b: 222,
+		}
 
-				# Save myself some typing, and some math cycles...
-				cell_idx = (row*@width)+col
-
-				# Check to see if this cell is covered
-				if @cell_status[cell_idx] == :status_covered
-					cell = :cellcover
-				elsif @cell_status[cell_idx] == :status_gold
-					cell = :gold
-				else
-					if @dragons[cell_idx] == DRAGON
-						cell = :dragon
-					else
-						cell = "cell#{@dragons[cell_idx]}".to_sym
-					end
-				end
-
-				# We know what to draw, so draw it
-				args.outputs.sprites << {
-					x: @board_x + (col*@cell_size),
-					y: @board_y + (row*@cell_size),
-					w: @cell_size, h: @cell_size, path: cell,
-					source_x: 0, source_y: 0, source_w: @cell_size, source_h: @cell_size,					
-				}
-
-			end
+		(1..10).each do |index|
+			args.outputs.borders << { 
+				x: @label_x - index, y: @label_time_y - index, 
+				w: @label_width + (index*2), h: @size_time.y + (index*2),
+				r: 100 + (index*10), g: 100 + (index*10), b: 100 + (index*10),
+			}
+			args.outputs.borders << { 
+				x: @label_x - index, y: @label_dragon_y - index, 
+				w: @label_width + (index*2), h: @size_dragon.y + (index*2),
+				r: 100 + (index*10), g: 100 + (index*10), b: 100 + (index*10),
+			}
+			args.outputs.borders << { 
+				x: @label_x - index, y: @label_restart_y - index, 
+				w: @label_width + (index*2), h: @size_restart.y + (index*2),
+				r: 100 + (index*10), g: 100 + (index*10), b: 100 + (index*10),
+			}
 		end
+
+		# Set up the labels, which yes could possibly be more ... static
+		secs_elapsed = ( args.tick_count - @start_tick ).to_i / 60
+		args.outputs.labels << {
+			x: @label_x + ( @label_width/2 ), y: @label_time_y + @size_time.y,
+			size_enum: @label_size, alignment_enum: 1,
+			text: "%02d:%02d:%02d" % [(secs_elapsed/3600)%60, (secs_elapsed/60)%60, secs_elapsed%60], 
+		}
+		args.outputs.labels << {
+			x: @label_x + ( @label_width/2 ), y: @label_dragon_y + @size_dragon.y,
+			size_enum: @label_size, alignment_enum: 1,
+			text: "#{@dragon_count - @cell_status.count(:status_gold)} Dragons To Find", 
+		}
+		args.outputs.labels << {
+			x: @label_x + ( @label_width/2 ), y: @label_restart_y + @size_restart.y,
+			size_enum: @label_size, alignment_enum: 1,
+			text: "Restart", 
+		}
+
+		# Send the board content to the output
+		args.outputs.sprites << {
+			x: @board_x, y: @board_y, w: @board_w, h: @board_h, path: :board,
+			source_x: 0, source_y: 0, source_w: @board_w, source_h: @board_h,
+		}
 
 	end
 
