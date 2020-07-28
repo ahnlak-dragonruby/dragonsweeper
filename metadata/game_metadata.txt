@@ -1,6 +1,6 @@
 devid=ahnlak
 devtitle=ahnlak
-gameid=DragonSweeper
+gameid=dragonsweeper
 gametitle=Dragon Sweeper
 version=0.1
 icon=metadata/icon.png
