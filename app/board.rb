@@ -19,7 +19,9 @@ class Board < Serializable
 
 		# Set up some default values here; things like the size of board,
 		# level of complexity and suchlike.
-		size :small, 1
+		@board_size = :small
+		@board_level = 1
+		size 
 		render_board
 
 	end
@@ -38,14 +40,14 @@ class Board < Serializable
 
 	# Reset the board to a given size, as well as building the graphical
 	# elements that will be required for this size
-	def size thesize, thelevel
+	def size 
 
 		# Set the basic metrics
-		case thesize
+		case @board_size
 		when :small 				# A 20x20 grid
-			@width = 20
+			@width = 30
 			@height = 20
-			@dragon_count = 50 * thelevel
+			@dragon_count = 50 * @board_level
 			@cell_size = 30
 			@cover_png = 'sprites/cover_30.png'
 			@dragon_png = 'sprites/dragon_30.png'
@@ -56,6 +58,10 @@ class Board < Serializable
 		end
 
 		# Clear and resize the board array
+		@spawned = false
+		@victorious = false
+		@burniation = -1
+		@burn_size = 1
 		@dragons = Array.new( @width * @height, 0 )
 		@cell_status = Array.new( @width * @height, :status_covered )
 
@@ -81,8 +87,6 @@ class Board < Serializable
 		@size_dragon = $gtk.calcstringbox( "888 Dragons To Find", @label_size )
 		@size_time = $gtk.calcstringbox( "88:88:88", @label_size )
 		
-		puts @label_size
-
 		# Lastly, work out some sensible offsets
 		@board_w = @width * @cell_size
 		@board_h = @height * @cell_size
@@ -153,6 +157,9 @@ class Board < Serializable
 
 		# Lastly, remember when we started playing properly
 		@start_tick = $gtk.args.tick_count
+		@spawned = true
+		@burniation = -1
+		@burn_size = 1
 
 	end
 
@@ -193,15 +200,15 @@ class Board < Serializable
 		mouse_x = ( ( args.inputs.mouse.x - @board_x ) / @cell_size ).floor
 		mouse_y = ( ( args.inputs.mouse.y - @board_y ) / @cell_size ).floor
 
-		# Handle if there's been a click
-		if args.inputs.mouse.click
+		# Handle if there's been a click, if we're still playing
+		if !@victorious && ( @burniation == -1 ) && args.inputs.mouse.click
 
 			# Save me some typing later on... ;-)
 			cell_idx = (mouse_y*@width) + mouse_x
 
 			# The user can do one of three things; click left, click right,
 			# or click both. Somwhow we have to handle all of this!
-			if args.inputs.mouse.button_left && args.inputs.mouse.button_right
+			if mouse_x.between?( 0, @width-1 ) && mouse_y.between?( 0, @height-1 ) && args.inputs.mouse.button_left && args.inputs.mouse.button_right
 
 				# Clear around an already-cleared cell
 				if @cell_status[cell_idx] == :status_revealed
@@ -226,7 +233,7 @@ class Board < Serializable
 				if mouse_x.between?( 0, @width-1 ) && mouse_y.between?( 0, @height-1 )
 
 					# If this is the first cell, spawn dragons!
-					if !@cell_status.include?(:status_revealed)
+					if !@spawned
 						spawn_dragons mouse_y, mouse_x
 					end
 
@@ -242,12 +249,48 @@ class Board < Serializable
 
 		end
 
+
+		# Check to see if they clicked on the restart button instead
+		if args.inputs.mouse.x.between?( @label_x, @label_x + @label_width ) &&
+		   args.inputs.mouse.y.between?( @label_restart_y, @label_restart_y + @size_restart.y )
+
+			# If the mouse is clicked down, we've clicked the button
+		   	if args.inputs.mouse.down
+		   		@restart_clicked = true
+		   	end
+
+		   	if @restart_clicked && args.inputs.mouse.up
+		   		@restart_clicked = false
+		   		size
+		   		render_board
+		   	end
+
+		end
+
 		# Now check for end conditions; have we flagged all the dragons we seek?
-		if @cell_status.count :status_gold == dragon_count
+		if ( @spawned ) && ( !@victorious) && ( @cell_status.count( :status_gold ) == @dragon_count )
+
+			# Then automagically reveal all non-flagged cells
+			@end_tick = args.tick_count
+			@victorious = true
+			@cell_status.map! { |cell|
+				cell == :status_covered ? :status_revealed : cell
+			}
+
+			# Redraw the board
+			render_board
+
 		end
 
 		# Have we revealed a dragon?!
-		
+		if @burniation == -1
+			@dragons.each_with_index { |dragon, index|
+				if ( dragon == DRAGON ) && ( @cell_status[index] == :status_revealed )
+					@burniation = index
+					@end_tick = args.tick_count
+				end
+			}
+		end
 
 	end
 
@@ -345,31 +388,140 @@ class Board < Serializable
 			}
 		end
 
-		# Set up the labels, which yes could possibly be more ... static
-		secs_elapsed = ( args.tick_count - @start_tick ).to_i / 60
-		args.outputs.labels << {
-			x: @label_x + ( @label_width/2 ), y: @label_time_y + @size_time.y,
-			size_enum: @label_size, alignment_enum: 1,
-			text: "%02d:%02d:%02d" % [(secs_elapsed/3600)%60, (secs_elapsed/60)%60, secs_elapsed%60], 
-		}
-		args.outputs.labels << {
-			x: @label_x + ( @label_width/2 ), y: @label_dragon_y + @size_dragon.y,
-			size_enum: @label_size, alignment_enum: 1,
-			text: "#{@dragon_count - @cell_status.count(:status_gold)} Dragons To Find", 
-		}
-		args.outputs.labels << {
-			x: @label_x + ( @label_width/2 ), y: @label_restart_y + @size_restart.y,
-			size_enum: @label_size, alignment_enum: 1,
-			text: "Restart", 
-		}
+		if @restart_clicked
+			args.outputs.borders << {
+				x: @label_x + 1, y: @label_restart_y + 1, w: @label_width - 2, h: @size_restart.y - 2,
+				r: 180, g: 180, b: 180,
+			}
+			args.outputs.borders << {
+				x: @label_x + 2, y: @label_restart_y + 2, w: @label_width - 4, h: @size_restart.y - 4,
+				r: 250, g: 250, b: 250,
+			}
+		else
+			args.outputs.borders << {
+				x: @label_x + 1, y: @label_restart_y + 1, w: @label_width - 2, h: @size_restart.y - 2,
+				r: 250, g: 250, b: 250,
+			}
+			args.outputs.borders << {
+				x: @label_x + 2, y: @label_restart_y + 2, w: @label_width - 4, h: @size_restart.y - 4,
+				r: 180, g: 180, b: 180,
+			}
+		end
 
-		# Send the board content to the output
-		args.outputs.sprites << {
-			x: @board_x, y: @board_y, w: @board_w, h: @board_h, path: :board,
-			source_x: 0, source_y: 0, source_w: @board_w, source_h: @board_h,
-		}
+
+		# Exactly what get's rendered next depends on if we're finished or burniating
+		if @victorious
+
+			# Set up the end-of-game labels
+			secs_elapsed = ( @end_tick - @start_tick ).to_i / 60
+			args.outputs.labels << {
+				x: @label_x + ( @label_width/2 ), y: @label_time_y + @size_time.y,
+				size_enum: @label_size, alignment_enum: 1,
+				text: "%02d:%02d:%02d" % [(secs_elapsed/3600)%60, (secs_elapsed/60)%60, secs_elapsed%60], 
+			}
+			args.outputs.labels << {
+				x: @label_x + ( @label_width/2 ), y: @label_dragon_y + @size_dragon.y,
+				size_enum: @label_size, alignment_enum: 1,
+				text: "#{@dragon_count} Dragons Found!", 
+			}
+			args.outputs.labels << {
+				x: @label_x + ( @label_width/2 ), y: @label_restart_y + @size_restart.y,
+				size_enum: @label_size, alignment_enum: 1,
+				text: "Restart", 
+			}
+
+			# And a shower of money!
+			coins = [ 400, ( args.tick_count - @end_tick ) ].min
+			(0..coins).each { |step|
+
+				# Decide where to put each coin
+				coin_x = @board_x + ( ( @board_w - 24 ) * rand )
+				coin_y = @board_y + ( ( @board_h - 24 ) * rand )
+
+				args.outputs.sprites << {
+					x: coin_x, y: coin_y, path: "sprites/coin.png",
+					w: 24, h: 24, angle: rand( 360 ),
+				}
+			}
+
+		elsif @burniation == -1
+
+			# Set up the labels, which yes could possibly be more ... static
+			if @spawned
+				secs_elapsed = ( args.tick_count - @start_tick ).to_i / 60
+				args.outputs.labels << {
+					x: @label_x + ( @label_width/2 ), y: @label_time_y + @size_time.y,
+					size_enum: @label_size, alignment_enum: 1,
+					text: "%02d:%02d:%02d" % [(secs_elapsed/3600)%60, (secs_elapsed/60)%60, secs_elapsed%60], 
+				}
+			else
+				args.outputs.labels << {
+					x: @label_x + ( @label_width/2 ), y: @label_time_y + @size_time.y,
+					size_enum: @label_size, alignment_enum: 1,
+					text: "--:--:--",
+				}
+			end
+			args.outputs.labels << {
+				x: @label_x + ( @label_width/2 ), y: @label_dragon_y + @size_dragon.y,
+				size_enum: @label_size, alignment_enum: 1,
+				text: "#{@dragon_count - @cell_status.count(:status_gold)} Dragons To Find", 
+			}
+			args.outputs.labels << {
+				x: @label_x + ( @label_width/2 ), y: @label_restart_y + @size_restart.y,
+				size_enum: @label_size, alignment_enum: 1,
+				text: "Restart", 
+			}
+
+			# Send the board content to the output
+			args.outputs.sprites << {
+				x: @board_x, y: @board_y, w: @board_w, h: @board_h, path: :board,
+				source_x: 0, source_y: 0, source_w: @board_w, source_h: @board_h,
+			}
+
+		else
+
+			# Render slightly different labels then
+			secs_elapsed = ( @end_tick - @start_tick ).to_i / 60
+			args.outputs.labels << {
+				x: @label_x + ( @label_width/2 ), y: @label_time_y + @size_time.y,
+				size_enum: @label_size, alignment_enum: 1,
+				text: "%02d:%02d:%02d" % [(secs_elapsed/3600)%60, (secs_elapsed/60)%60, secs_elapsed%60], 
+			}
+			args.outputs.labels << {
+				x: @label_x + ( @label_width/2 ), y: @label_dragon_y + @size_dragon.y,
+				size_enum: @label_size, alignment_enum: 1,
+				text: "You Poked A Dragon!", 
+			}
+			args.outputs.labels << {
+				x: @label_x + ( @label_width/2 ), y: @label_restart_y + @size_restart.y,
+				size_enum: @label_size, alignment_enum: 1,
+				text: "Retry", 
+			}
+
+			# Work out where we are burniating
+			cell_y, cell_x = @burniation.divmod( @width )
+			cell_x = ( cell_x * @cell_size ) + @board_x
+			cell_y = ( cell_y * @cell_size ) + @board_y
+
+			# And build up a bunch of flamey things, randomly oriented
+			(0..@burn_size).reverse_each { |step| 
+
+				# Work out sizes and positions
+				flame_size = @cell_size + ( step * 20 )
+				flame_x = cell_x - (flame_size/2)
+				flame_y = cell_y - (flame_size/2)
+
+				args.outputs.sprites << {
+					x: flame_x, y: flame_y, path: "sprites/burniate.png",
+					w: flame_size, h: flame_size, 
+					angle: ( ( step * 42 ) + args.tick_count ) % 360,
+					a: 100 - (step),
+				}
+			}
+			@burn_size = [100, @burn_size+1].min
+
+		end
 
 	end
-
 
 end

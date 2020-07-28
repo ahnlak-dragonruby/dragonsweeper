@@ -15,7 +15,7 @@ $gtk.require 'app/board.rb'
 def init args
 
 	# Keep track of a release version
-	args.state.version = "0.1.20200722"
+	args.state.version = "1.0.20200728"
 
 	# Create a Board which holds everything about the current board
 	args.state.board = Board.new()
