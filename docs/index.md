@@ -6,6 +6,8 @@ built using [DragonRuby](https://www.dragonruby.org). My original plan was to tr
 and do this as a "24 hour game", but I kept getting distracted by other issues and
 it ended up taking shape over a few days.
 
+Dragon Sweeper is published on [itch.io](https://ahnlak.itch.io/dragonsweeper)
+
 Under The Hood
 --------------
 
